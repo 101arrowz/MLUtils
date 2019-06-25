@@ -5,14 +5,14 @@ import os
 from hashlib import md5
 import pickle
 class DataLoader:
-    def __init__(self, d, usesave=False, save=True, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, replace={}, random_seed=np.random.randint(65535), test_split=0.2):
+    def __init__(self, d, use_save=False, save=True, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, dupes_one_set=True, replace={}, one_hot=False, random_seed=np.random.randint(65535), test_split=0.2):
         """
         A data loader.
 
         `d`
         A filepath, URL, or raw string to load data from.
 
-        `usesave`
+        `use_save`
         Whether to use a pickled version of the current dataset. Make "True" when finished data manipulation.
 
         `save`
@@ -39,8 +39,17 @@ class DataLoader:
         `remove`
         An index/iterable of indices or name/iterable of names for the column(s) to be outright removed.
         
+        `fill_to_max`
+        Whether or not to equalize the amount of data for each class.
+
+        `dupes_one_set`
+        Whether or not to move duplicates all to one set randomly. Always true with `fill_to_max` != None. Strongly suggested to leave True.
+
         `replace`
         A dictionary with keys (to replace) and values (what to replace with)
+
+        `one_hot`
+        Whether to encode the labels as one-hot vectors.
 
         `seed`
         The random seed. Use to remove randomness.
@@ -60,23 +69,26 @@ class DataLoader:
             raise Exception('p must be of type string (or bytes when passing raw, encoded data)')
         fn = md5(d if isinstance(d, bytes) else d.encode('UTF-8')).hexdigest()
         datafp = os.path.join(cachedir, fn+'.pkldata')
-        if usesave:
+        if use_save:
             try:
                 with open(datafp, 'rb') as f:
-                    fulldata = pickle.load(f)
+                    self.saveData(pickle.load(f))
+                    return
             except FileNotFoundError:
                 print('Failed to find saved file! Loading directly...')
-        if not fulldata: fulldata = self.__class__.load(**locals())
+        fulldata = self.__class__.load(**locals())
         if save:
             try:
                 with open(datafp, 'wb') as f:
                     pickle.dump(fulldata, f, protocol=pickle.HIGHEST_PROTOCOL)
             except Exception as e:
                 print('Could not save data for an unknown reason. See the following exception:', e)
+        self.saveData(fulldata)
+    def saveData(self, fulldata):
         self.data = fulldata
         self.X_train, self.X_test, self.y_train, self.y_test = self.data
     @staticmethod
-    def load(d, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, replace={}, random_seed=np.random.randint(65535), test_split=0.2, **kwargs):
+    def load(d, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, dupes_one_set=True, replace={}, one_hot=False, random_seed=np.random.randint(65535), test_split=0.2, **kwargs):
         """
         Returns a tuple (X_train, X_test, y_train, y_test) given a dataset.
 
@@ -103,9 +115,18 @@ class DataLoader:
 
         `remove`
         An index/iterable of indices or name/iterable of names for the column(s) to be outright removed.
+        
+        `fill_to_max`
+        Whether or not to equalize the amount of data for each class.
+
+        `dupes_one_set`
+        Whether or not to move duplicates all to one set randomly. Always true with `fill_to_max` != None. Strongly suggested to leave True.
 
         `replace`
         A dictionary with keys (to replace) and values (what to replace with)
+
+        `one_hot`
+        Whether to encode the labels as one-hot vectors.
 
         `seed`
         The random seed. Use to remove randomness.
@@ -164,6 +185,10 @@ class DataLoader:
                 raise TypeError('fill_to_max must be a boolean or None (if no replication of terms is desired)')
         elif len(class_col) < 1:
             raise ValueError('cannot have multiple class columns if filling. Set fill_to_max to None to remove this error.')
+        if not isinstance(dupes_one_set, bool):
+            raise TypeError('dupes_one_set must be of type bool')
+        if not isinstance(one_hot, bool):
+            raise TypeError('one_hot must be of type bool')
         if not isinstance(replace, dict):
             raise TypeError('replace must be a dict with the keys being the strings for replacement and the values being the new strings')
         if not all(isinstance(v, str) and isinstance(k, str) for k,v in replace.items()):
@@ -222,6 +247,9 @@ class DataLoader:
             labels = np.squeeze(labels.to_numpy(dtype=dtype))
         except TypeError:
             raise TypeError('invalid dtype: {} is not a legal datatype for a numpy array'.format(dtype)) from None
+        if one_hot:
+            unique_labels = np.unique(labels)
+            labels = np.asarray([np.asarray([0 if labels[i] != unique_labels[g] else 1 for g in range(len(unique_labels))]) for i in range(labels.shape[0])])
         np.random.seed(random_seed); np.random.shuffle(data)
         np.random.seed(random_seed); np.random.shuffle(labels)
         lim = int(len(labels)*test_split)
@@ -229,23 +257,19 @@ class DataLoader:
             raise ValueError("no testing samples. This could be due to improper loading of the data (for example, incorrect delimiter).")
         fulldata =  (data[:-lim], data[-lim:], labels[:-lim], labels[-lim:])
         # Don't want to touch inner layers
-        if fill_to_max is not None:
-            fulldata = tuple(map(list, fulldata))
-            if fill_to_max:
-                for el in data: # Removing duplicates
-                    remfrom, addto = (0, 1) if np.random.rand() < test_split else (1, 0)
-                    getind = lambda : [i for i in range(len(fulldata[remfrom])) if all(fulldata[remfrom][i] == el)]
-                    it = 0
-                    for firstIndex in getind():
-                        ind = firstIndex-it
-                        fulldata[remfrom].pop(ind)
-                        fulldata[addto].append(el)
-                        v = fulldata[remfrom+2].pop(ind)
-                        fulldata[addto+2].append(v)
-                        it += 1
-                for i in range(4):
-                    fulldata[i] = np.asarray(fulldata[i])
-                    np.random.seed(random_seed); np.random.shuffle(fulldata[i])
-            else:
-                raise NotImplementedError("fill_to_max=False is not supported. Use None for no filling or removal, or True for filling.")
+        if fill_to_max or dupes_one_set:
+            fulldata = list(map(list, fulldata))
+            for el in data: # Removing duplicates
+                remfrom, addto = (0, 1) if np.random.rand() < test_split else (1, 0)
+                getInd = lambda : [i for i in range(len(fulldata[remfrom])) if all(fulldata[remfrom][i] == el)]
+                while getInd():
+                    ind = getInd()[0]
+                    fulldata[remfrom].pop(ind)
+                    fulldata[addto].append(el)
+                    v = fulldata[remfrom+2].pop(ind)
+                    fulldata[addto+2].append(v)
+            for i in range(4):
+                fulldata[i] = np.asarray(fulldata[i])
+                np.random.seed(random_seed); np.random.shuffle(fulldata[i])
+            fulldata = tuple(fulldata)
         return fulldata
