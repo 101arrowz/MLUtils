@@ -33,7 +33,7 @@ class DataLoader:
         `header`
         Whether there is a header containing labels for each column
         
-        `class-col`
+        `class_col`
         An index/iterable of indices or name/iterable of names for the column(s) containing labels.
 
         `remove`
@@ -98,7 +98,7 @@ class DataLoader:
         `header`
         Whether there is a header containing labels for each column
         
-        `class-col`
+        `class_col`
         An index/iterable of indices or name/iterable of names for the column(s) containing labels.
 
         `remove`
@@ -227,4 +227,25 @@ class DataLoader:
         lim = int(len(labels)*test_split)
         if not lim:
             raise ValueError("no testing samples. This could be due to improper loading of the data (for example, incorrect delimiter).")
-        return (data[:-lim], data[-lim:], labels[:-lim], labels[-lim:])
+        fulldata =  (data[:-lim], data[-lim:], labels[:-lim], labels[-lim:])
+        # Don't want to touch inner layers
+        if fill_to_max is not None:
+            fulldata = tuple(map(list, fulldata))
+            if fill_to_max:
+                for el in data: # Removing duplicates
+                    remfrom, addto = (0, 1) if np.random.rand() < test_split else (1, 0)
+                    getind = lambda : [i for i in range(len(fulldata[remfrom])) if all(fulldata[remfrom][i] == el)]
+                    it = 0
+                    for firstIndex in getind():
+                        ind = firstIndex-it
+                        fulldata[remfrom].pop(ind)
+                        fulldata[addto].append(el)
+                        v = fulldata[remfrom+2].pop(ind)
+                        fulldata[addto+2].append(v)
+                        it += 1
+                for i in range(4):
+                    fulldata[i] = np.asarray(fulldata[i])
+                    np.random.seed(random_seed); np.random.shuffle(fulldata[i])
+            else:
+                raise NotImplementedError("fill_to_max=False is not supported. Use None for no filling or removal, or True for filling.")
+        return fulldata
