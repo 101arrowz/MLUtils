@@ -5,7 +5,7 @@ import os
 from hashlib import md5
 import pickle
 class DataLoader:
-    def __init__(self, d, use_save=False, save=True, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, dupes_one_set=True, replace={}, one_hot=False, random_seed=np.random.randint(65535), test_split=0.2):
+    def __init__(self, d, use_save=False, save=True, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, dupes_one_set=True, replace={}, unknown=None, one_hot=False, random_seed=np.random.randint(65535), test_split=0.2):
         """
         A data loader.
 
@@ -58,9 +58,9 @@ class DataLoader:
         The decimal out of one to use as testing data.
         """
 
-        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        if __name__ == '__main__': os.chdir(os.path.dirname(os.path.abspath(__file__)))
         fulldata = None
-        cachedir = '__pycache__'
+        cachedir = os.path.join(os.path.dirname(os.path.abspath(__file__)), '__pycache__')
         if not os.path.isdir(cachedir):
             if os.path.exists(cachedir):
                 os.remove(cachedir)
@@ -88,7 +88,7 @@ class DataLoader:
         self.data = fulldata
         self.X_train, self.X_test, self.y_train, self.y_test = self.data
     @staticmethod
-    def load(d, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, dupes_one_set=True, replace={}, one_hot=False, random_seed=np.random.randint(65535), test_split=0.2, **kwargs):
+    def load(d, literal_data=False, encoding=None, delim=',', dtype=np.float32, header=True, class_col=-1, remove=None, fill_to_max=None, dupes_one_set=True, replace={}, unknown=None, one_hot=False, random_seed=np.random.randint(65535), test_split=0.2, **kwargs):
         """
         Returns a tuple (X_train, X_test, y_train, y_test) given a dataset.
 
@@ -191,6 +191,14 @@ class DataLoader:
             raise TypeError('one_hot must be of type bool')
         if not isinstance(replace, dict):
             raise TypeError('replace must be a dict with the keys being the strings for replacement and the values being the new strings')
+        if isinstance(unknown, (str)):
+            unknown = (unknown,)
+        if unknown is not None:
+            try:
+                if not all(map(lambda v: isinstance(v, str), unknown)):
+                    raise TypeError('unknown must contain only str values')
+            except TypeError as e:
+                raise (TypeError('unknown must be a str or an iterable') if str(e)[0] == "'" else e) from None
         if not all(isinstance(v, str) and isinstance(k, str) for k,v in replace.items()):
             raise TypeError('every key and value in replace must be a string')
         if not isinstance(random_seed, int):
@@ -219,6 +227,11 @@ class DataLoader:
             raise ValueError("input file or string contained no data")
         df = pd.read_csv(StringIO(raw), sep=delim, header=header)
         for k, v in replace.items(): df.replace(k, v, inplace=True)
+        if unknown is not None:
+            for s in df:
+                not_invalid = df[~df[s].isin(unknown)]
+                for val in unknown:
+                    df[s].replace(val, not_invalid[s].sample().to_numpy()[0], inplace=True)
         if fill_to_max is not None:
             labels = df[class_col[0]] if strindices else df.iloc[:, class_col[0]]
             valcs = labels.value_counts()
@@ -250,6 +263,10 @@ class DataLoader:
         if one_hot:
             unique_labels = np.unique(labels)
             labels = np.asarray([np.asarray([0 if labels[i] != unique_labels[g] else 1 for g in range(len(unique_labels))]) for i in range(labels.shape[0])])
+            # datat = np.transpose(data)
+            # unique_vals = [np.unique(datat[n]) for n in range(datat.shape[0])]
+            # print(unique_vals[0])
+            # data = np.asarray([np.asarray([np.asarray([0 if data[g][b] != unique_vals[b][i] else 1 for i in range(len(unique_vals[b]))]) for b in range(data.shape[1])]) for g in range(data.shape[0])])
         np.random.seed(random_seed); np.random.shuffle(data)
         np.random.seed(random_seed); np.random.shuffle(labels)
         lim = int(len(labels)*test_split)
